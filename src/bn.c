@@ -2,41 +2,45 @@
 
 #include "bn.h"
 
-#define LSSL_ERR_REASON (ERR_reason_error_string(ERR_get_error()))
-
-#define LSSL_BN_CALL(FN, ...)                              \
-    if (!(FN(__VA_ARGS__))) {                              \
-        luaL_error(L, #FN " failed: %s", LSSL_ERR_REASON); \
-        unreachable();                                     \
+#define LUNARSSL_BN_CALL(FN, ...)                              \
+    if (!(FN(__VA_ARGS__))) {                                  \
+        luaL_error(L, #FN " failed: %s", LUNARSSL_ERR_REASON); \
+        unreachable();                                         \
     }
 
-#define LSSL_BNCTX_CALL(FN, CTX, ...)                      \
-    if (!(FN(__VA_ARGS__, CTX))) {                         \
-        BN_CTX_free(CTX);                                  \
-        luaL_error(L, #FN " failed: %s", LSSL_ERR_REASON); \
-        unreachable();                                     \
-    }                                                      \
-    BN_CTX_free(CTX);
-
-#define LSSL_BNR_CALL(FN, R, ...)                          \
-    if (!(FN(R, __VA_ARGS__))) {                           \
-        BN_free(R);                                        \
-        luaL_error(L, #FN " failed: %s", LSSL_ERR_REASON); \
-        unreachable();                                     \
+#define LUNARSSL_BND_CALL(DEST, FN, ...)                       \
+    if (!(DEST = FN(__VA_ARGS__))) {                           \
+        luaL_error(L, #FN " failed: %s", LUNARSSL_ERR_REASON); \
+        unreachable();                                         \
     }
 
-#define LSSL_BNRCTX_CALL(FN, R, CTX, ...)                  \
-    if (!(FN(R, __VA_ARGS__, CTX))) {                      \
-        BN_free(R);                                        \
-        BN_CTX_free(CTX);                                  \
-        luaL_error(L, #FN " failed: %s", LSSL_ERR_REASON); \
-        unreachable();                                     \
-    }                                                      \
+#define LUNARSSL_BNCTX_CALL(CTX, FN, ...)                      \
+    if (!(FN(__VA_ARGS__))) {                                  \
+        BN_CTX_free(CTX);                                      \
+        luaL_error(L, #FN " failed: %s", LUNARSSL_ERR_REASON); \
+        unreachable();                                         \
+    }                                                          \
     BN_CTX_free(CTX);
 
-#define LSSL_MIN_ULONG ((BN_ULONG)1 << ((BN_BYTES * 8) - 1))
+#define LUNARSSL_BNR_CALL(R, FN, ...)                          \
+    if (!(FN(__VA_ARGS__))) {                                  \
+        BN_free(R);                                            \
+        luaL_error(L, #FN " failed: %s", LUNARSSL_ERR_REASON); \
+        unreachable();                                         \
+    }
 
-#define LSSL_BN_negate(bn) BN_set_negative(bn, !BN_is_negative(bn))
+#define LUNARSSL_BNRCTX_CALL(R, CTX, FN, ...)                  \
+    if (!(FN(__VA_ARGS__))) {                                  \
+        BN_free(R);                                            \
+        BN_CTX_free(CTX);                                      \
+        luaL_error(L, #FN " failed: %s", LUNARSSL_ERR_REASON); \
+        unreachable();                                         \
+    }                                                          \
+    BN_CTX_free(CTX);
+
+#define LUNARSSL_MIN_ULONG ((BN_ULONG)1 << ((BN_BYTES * 8) - 1))
+
+#define LUNARSSL_BN_negate(bn) BN_set_negative(bn, !BN_is_negative(bn))
 
 static BN_CTX* lunarssl_bn_ctx(lua_State* L, int secure_idx) {
     int secure = secure_idx == -1 ? 0 : lua_toboolean(L, secure_idx);
@@ -49,7 +53,7 @@ static BN_CTX* lunarssl_bn_ctx(lua_State* L, int secure_idx) {
     }
 
     if (!ctx)
-        luaL_error(L, "BN_CTX_new failed: %s", LSSL_ERR_REASON);
+        luaL_error(L, "BN_CTX_new failed: %s", LUNARSSL_ERR_REASON);
 
     return ctx;
 }
@@ -63,17 +67,17 @@ BIGNUM* lunarssl_bn_create(lua_State* L, int secure, lua_Integer value) {
     }
 
     if (!r)
-        luaL_error(L, "BN_new failed: %s", LSSL_ERR_REASON);
+        luaL_error(L, "BN_new failed: %s", LUNARSSL_ERR_REASON);
 
     if (value == 0) {
         BN_zero(r);
     } else if (value == 1) {
         BN_one(r);
-    } else if (value < 0 && ((BN_ULONG)value) != LSSL_MIN_ULONG) {
-        LSSL_BNR_CALL(BN_set_word, r, (BN_ULONG)-value);
+    } else if (value < 0 && ((BN_ULONG)value) != LUNARSSL_MIN_ULONG) {
+        LUNARSSL_BNR_CALL(r, BN_set_word, r, (BN_ULONG)-value);
         BN_set_negative(r, 1);
     } else {
-        LSSL_BNR_CALL(BN_set_word, r, (BN_ULONG)value);
+        LUNARSSL_BNR_CALL(r, BN_set_word, r, (BN_ULONG)value);
     }
 
     return r;
@@ -81,9 +85,14 @@ BIGNUM* lunarssl_bn_create(lua_State* L, int secure, lua_Integer value) {
 
 BIGNUM* lunarssl_bn_check_loose(lua_State* L, int idx) {
     if (lua_isinteger(L, idx)) {
-        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, 0);
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
         *r = lunarssl_bn_create(L, 0, lua_tointeger(L, idx));
         return *r;
+    } else if (lua_isstring(L, idx)) {
+        const char* dec = lua_tostring(L, idx);
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+
+        BN_dec2bn(NULL, dec);
     }
 
     return lunarssl_bn_check(L, idx);
@@ -98,9 +107,8 @@ static int lunarssl_bn_new(lua_State* L) {
     lua_Integer value = luaL_optinteger(L, 1, 0);
     int secure = lua_toboolean(L, 2);
 
-    BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+    BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
     *r = lunarssl_bn_create(L, secure, value);
-    luaL_setmetatable(L, "lunarssl.bn");
     return 1;
 }
 
@@ -112,16 +120,10 @@ static int lunarssl_bn_new(lua_State* L) {
 static int lunarssl_bn_from_hex(lua_State* L) {
     int secure = lua_toboolean(L, 2);
 
-    BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+    BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
     *r = lunarssl_bn_create(L, secure, 0);
 
-    const char* hex = luaL_checkstring(L, 1);
-    if (!BN_hex2bn(r, hex)) {
-        BN_free(*r);
-        return luaL_error(L, "BN_hex2bn failed: %s", LSSL_ERR_REASON);
-    }
-
-    luaL_setmetatable(L, "lunarssl.bn");
+    LUNARSSL_BNR_CALL(*r, BN_hex2bn, *r, luaL_checkstring(L, 1));
     return 1;
 }
 
@@ -133,16 +135,10 @@ static int lunarssl_bn_from_hex(lua_State* L) {
 static int lunarssl_bn_from_dec(lua_State* L) {
     int secure = lua_toboolean(L, 2);
 
-    BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+    BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
     *r = lunarssl_bn_create(L, secure, 0);
 
-    const char* dec = luaL_checkstring(L, 1);
-    if (!BN_dec2bn(r, dec)) {
-        BN_free(*r);
-        return luaL_error(L, "BN_dec2bn failed: %s", LSSL_ERR_REASON);
-    }
-
-    luaL_setmetatable(L, "lunarssl.bn");
+    LUNARSSL_BNR_CALL(*r, BN_dec2bn, *r, luaL_checkstring(L, 1));
     return 1;
 }
 
@@ -154,14 +150,12 @@ static int lunarssl_bn_from_dec(lua_State* L) {
 static int lunarssl_bn_from_bin(lua_State* L) {
     int secure = lua_toboolean(L, 2);
 
-    BIGNUM** bn = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+    BIGNUM** bn = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
     *bn = lunarssl_bn_create(L, secure, 0);
 
     size_t len;
     const char* bin = luaL_checklstring(L, 1, &len);
-    LSSL_BN_CALL(BN_bin2bn, (const unsigned char*)bin, len, *bn);
-
-    luaL_setmetatable(L, "lunarssl.bn");
+    LUNARSSL_BN_CALL(BN_bin2bn, (const unsigned char*)bin, len, *bn);
     return 1;
 }
 
@@ -290,7 +284,7 @@ static int lunarssl_bn_abs_is_word(lua_State* L) {
 /// @tparam lunarssl.bn bn
 static int lunarssl_bn_negate(lua_State* L) {
     BIGNUM* bn = lunarssl_bn_check(L, 1);
-    LSSL_BN_negate(bn);
+    LUNARSSL_BN_negate(bn);
     return 0;
 }
 
@@ -304,7 +298,7 @@ static int lunarssl_bn_add(lua_State* L) {
     const BIGNUM* a = lunarssl_bn_check_loose(L, 2);
     const BIGNUM* b = lunarssl_bn_check_loose(L, 3);
 
-    LSSL_BN_CALL(BN_add, r, a, b);
+    LUNARSSL_BN_CALL(BN_add, r, a, b);
     return 0;
 }
 
@@ -318,7 +312,7 @@ static int lunarssl_bn_sub(lua_State* L) {
     const BIGNUM* a = lunarssl_bn_check_loose(L, 2);
     const BIGNUM* b = lunarssl_bn_check_loose(L, 3);
 
-    LSSL_BN_CALL(BN_sub, r, a, b);
+    LUNARSSL_BN_CALL(BN_sub, r, a, b);
     return 0;
 }
 
@@ -334,7 +328,7 @@ static int lunarssl_bn_mul(lua_State* L) {
     const BIGNUM* b = lunarssl_bn_check_loose(L, 3);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 4);
 
-    LSSL_BNCTX_CALL(BN_mul, ctx, r, a, b);
+    LUNARSSL_BNCTX_CALL(ctx, BN_mul, r, a, b, ctx);
     return 0;
 }
 
@@ -348,7 +342,7 @@ static int lunarssl_bn_sqr(lua_State* L) {
     const BIGNUM* a = lunarssl_bn_check_loose(L, 2);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 3);
 
-    LSSL_BNCTX_CALL(BN_sqr, ctx, r, a);
+    LUNARSSL_BNCTX_CALL(ctx, BN_sqr, r, a, ctx);
     return 0;
 }
 
@@ -360,13 +354,13 @@ static int lunarssl_bn_sqr(lua_State* L) {
 /// @tparam lunarssl.bn b divisor
 /// @tparam[opt] boolean secure use a secure context.
 static int lunarssl_bn_div(lua_State* L) {
-    BIGNUM* q = lunarssl_bn_check(L, 1);
-    BIGNUM* r = lunarssl_bn_check(L, 2);
+    BIGNUM* q = lua_isnoneornil(L, 1) ? NULL : lunarssl_bn_check(L, 1);
+    BIGNUM* r = lua_isnoneornil(L, 2) ? NULL : lunarssl_bn_check(L, 2);
     const BIGNUM* a = lunarssl_bn_check_loose(L, 3);
     const BIGNUM* b = lunarssl_bn_check_loose(L, 4);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 5);
 
-    LSSL_BNCTX_CALL(BN_div, ctx, q, r, a, b);
+    LUNARSSL_BNCTX_CALL(ctx, BN_div, q, r, a, b, ctx);
     return 0;
 }
 
@@ -382,7 +376,7 @@ static int lunarssl_bn_mod(lua_State* L) {
     const BIGNUM* m = lunarssl_bn_check_loose(L, 3);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 4);
 
-    LSSL_BNCTX_CALL(BN_mod, ctx, r, a, m);
+    LUNARSSL_BNCTX_CALL(ctx, BN_mod, r, a, m, ctx);
     return 0;
 }
 
@@ -398,7 +392,7 @@ static int lunarssl_bn_nnmod(lua_State* L) {
     const BIGNUM* m = lunarssl_bn_check_loose(L, 3);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 4);
 
-    LSSL_BNCTX_CALL(BN_nnmod, ctx, rem, a, m);
+    LUNARSSL_BNCTX_CALL(ctx, BN_nnmod, rem, a, m, ctx);
     return 0;
 }
 
@@ -414,7 +408,7 @@ static int lunarssl_bn_exp(lua_State* L) {
     const BIGNUM* p = lunarssl_bn_check_loose(L, 3);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 4);
 
-    LSSL_BNCTX_CALL(BN_exp, ctx, r, a, p);
+    LUNARSSL_BNCTX_CALL(ctx, BN_exp, r, a, p, ctx);
     return 0;
 }
 
@@ -430,7 +424,7 @@ static int lunarssl_bn_gcd(lua_State* L) {
     const BIGNUM* b = lunarssl_bn_check_loose(L, 3);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 4);
 
-    LSSL_BNCTX_CALL(BN_gcd, ctx, r, a, b);
+    LUNARSSL_BNCTX_CALL(ctx, BN_gcd, r, a, b, ctx);
     return 0;
 }
 
@@ -448,7 +442,7 @@ static int lunarssl_bn_mod_add(lua_State* L) {
     const BIGNUM* m = lunarssl_bn_check_loose(L, 4);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 5);
 
-    LSSL_BNCTX_CALL(BN_mod_add, ctx, r, a, b, m);
+    LUNARSSL_BNCTX_CALL(ctx, BN_mod_add, r, a, b, m, ctx);
     return 0;
 }
 
@@ -466,7 +460,7 @@ static int lunarssl_bn_mod_sub(lua_State* L) {
     const BIGNUM* m = lunarssl_bn_check_loose(L, 4);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 5);
 
-    LSSL_BNCTX_CALL(BN_mod_sub, ctx, r, a, b, m);
+    LUNARSSL_BNCTX_CALL(ctx, BN_mod_sub, r, a, b, m, ctx);
     return 0;
 }
 
@@ -484,7 +478,7 @@ static int lunarssl_bn_mod_mul(lua_State* L) {
     const BIGNUM* m = lunarssl_bn_check_loose(L, 4);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 5);
 
-    LSSL_BNCTX_CALL(BN_mod_mul, ctx, r, a, b, m);
+    LUNARSSL_BNCTX_CALL(ctx, BN_mod_mul, r, a, b, m, ctx);
     return 0;
 }
 
@@ -500,7 +494,7 @@ static int lunarssl_bn_mod_sqr(lua_State* L) {
     const BIGNUM* m = lunarssl_bn_check_loose(L, 3);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 4);
 
-    LSSL_BNCTX_CALL(BN_mod_sqr, ctx, r, a, m);
+    LUNARSSL_BNCTX_CALL(ctx, BN_mod_sqr, r, a, m, ctx);
     return 0;
 }
 
@@ -516,7 +510,7 @@ static int lunarssl_bn_mod_sqrt(lua_State* L) {
     const BIGNUM* p = lunarssl_bn_check_loose(L, 3);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 4);
 
-    LSSL_BNCTX_CALL(BN_mod_sqrt, ctx, r, a, p);
+    LUNARSSL_BNCTX_CALL(ctx, BN_mod_sqrt, r, a, p, ctx);
     return 0;
 }
 
@@ -534,7 +528,7 @@ static int lunarssl_bn_mod_exp(lua_State* L) {
     const BIGNUM* m = lunarssl_bn_check_loose(L, 4);
     BN_CTX* ctx = lunarssl_bn_ctx(L, 5);
 
-    LSSL_BNCTX_CALL(BN_mod_exp, ctx, r, a, p, m);
+    LUNARSSL_BNCTX_CALL(ctx, BN_mod_exp, r, a, p, m, ctx);
     return 0;
 }
 
@@ -547,9 +541,9 @@ static int lunarssl_bn_add_word(lua_State* L) {
     lua_Integer word = luaL_checkinteger(L, 2);
 
     if (word < 0) {
-        LSSL_BN_CALL(BN_sub_word, r, (BN_ULONG)-word);
+        LUNARSSL_BN_CALL(BN_sub_word, r, (BN_ULONG)-word);
     } else {
-        LSSL_BN_CALL(BN_add_word, r, (BN_ULONG)word);
+        LUNARSSL_BN_CALL(BN_add_word, r, (BN_ULONG)word);
     }
     return 0;
 }
@@ -563,9 +557,9 @@ static int lunarssl_bn_sub_word(lua_State* L) {
     lua_Integer word = luaL_checkinteger(L, 2);
 
     if (word < 0) {
-        LSSL_BN_CALL(BN_add_word, r, (BN_ULONG)-word);
+        LUNARSSL_BN_CALL(BN_add_word, r, (BN_ULONG)-word);
     } else {
-        LSSL_BN_CALL(BN_sub_word, r, (BN_ULONG)word);
+        LUNARSSL_BN_CALL(BN_sub_word, r, (BN_ULONG)word);
     }
     return 0;
 }
@@ -579,10 +573,10 @@ static int lunarssl_bn_mul_word(lua_State* L) {
     lua_Integer word = luaL_checkinteger(L, 2);
 
     if (word < 0) {
-        LSSL_BN_CALL(BN_mul_word, r, (BN_ULONG)-word);
-        LSSL_BN_negate(r);
+        LUNARSSL_BN_CALL(BN_mul_word, r, (BN_ULONG)-word);
+        LUNARSSL_BN_negate(r);
     } else {
-        LSSL_BN_CALL(BN_mul_word, r, (BN_ULONG)word);
+        LUNARSSL_BN_CALL(BN_mul_word, r, (BN_ULONG)word);
     }
 
     return 0;
@@ -600,13 +594,13 @@ static int lunarssl_bn_div_word(lua_State* L) {
     BN_ULONG rem;
     if (word < 0) {
         rem = BN_div_word(r, (BN_ULONG)-word);
-        LSSL_BN_negate(r);
+        LUNARSSL_BN_negate(r);
     } else {
         rem = BN_div_word(r, (BN_ULONG)word);
     }
 
     if (rem == (BN_ULONG)-1)
-        return luaL_error(L, "BN_div_word failed: %s", LSSL_ERR_REASON);
+        return luaL_error(L, "BN_div_word failed: %s", LUNARSSL_ERR_REASON);
 
     lua_pushinteger(L, (lua_Integer)rem);
     return 1;
@@ -629,7 +623,7 @@ static int lunarssl_bn_mod_word(lua_State* L) {
     }
 
     if (rem == (BN_ULONG)-1)
-        return luaL_error(L, "BN_mod_word failed: %s", LSSL_ERR_REASON);
+        return luaL_error(L, "BN_mod_word failed: %s", LUNARSSL_ERR_REASON);
 
     lua_pushinteger(L, (lua_Integer)rem);
     return 1;
@@ -641,9 +635,9 @@ static int lunarssl_bn_mod_word(lua_State* L) {
 /// @treturn string
 static int lunarssl_bn_to_hex(lua_State* L) {
     BIGNUM* bn = lunarssl_bn_check(L, 1);
-    char* hex = BN_bn2hex(bn);
-    if (!hex)
-        return luaL_error(L, "BN_bn2hex failed: %s", LSSL_ERR_REASON);
+
+    char* hex;
+    LUNARSSL_BND_CALL(hex, BN_bn2hex, bn);
 
     lua_pushstring(L, hex);
     OPENSSL_free(hex);
@@ -656,9 +650,9 @@ static int lunarssl_bn_to_hex(lua_State* L) {
 /// @treturn string
 static int lunarssl_bn_to_dec(lua_State* L) {
     BIGNUM* bn = lunarssl_bn_check(L, 1);
-    char* dec = BN_bn2dec(bn);
-    if (!dec)
-        return luaL_error(L, "BN_bn2dec failed: %s", LSSL_ERR_REASON);
+
+    char* dec;
+    LUNARSSL_BND_CALL(dec, BN_bn2dec, bn);
 
     lua_pushstring(L, dec);
     OPENSSL_free(dec);
@@ -680,7 +674,7 @@ static int lunarssl_bn_to_bin(lua_State* L) {
     int written = BN_bn2binpad(bn, bin, len);
     if (written == -1) {
         OPENSSL_free(bin);
-        return luaL_error(L, "BN_bn2binpad failed: %s", LSSL_ERR_REASON);
+        return luaL_error(L, "BN_bn2binpad failed: %s", LUNARSSL_ERR_REASON);
     }
 
     lua_pushlstring(L, (const char*)bin, written);
@@ -697,7 +691,7 @@ static int lunarssl_bn_set_bit(lua_State* L) {
     int bit = luaL_checkinteger(L, 2);
     luaL_argcheck(L, bit >= 0, 2, "bit must be non-negative");
 
-    LSSL_BN_CALL(BN_set_bit, bn, bit);
+    LUNARSSL_BN_CALL(BN_set_bit, bn, bit);
     return 0;
 }
 
@@ -710,7 +704,7 @@ static int lunarssl_bn_clear_bit(lua_State* L) {
     int bit = luaL_checkinteger(L, 2);
     luaL_argcheck(L, bit >= 0, 2, "bit must be non-negative");
 
-    LSSL_BN_CALL(BN_clear_bit, bn, bit);
+    LUNARSSL_BN_CALL(BN_clear_bit, bn, bit);
     return 0;
 }
 
@@ -739,7 +733,7 @@ static int lunarssl_bn_mask_bits(lua_State* L) {
     int bits = luaL_checkinteger(L, 2);
     luaL_argcheck(L, bits >= 0, 2, "bits must be non-negative");
 
-    LSSL_BN_CALL(BN_mask_bits, bn, bits);
+    LUNARSSL_BN_CALL(BN_mask_bits, bn, bits);
     return 0;
 }
 
@@ -754,7 +748,7 @@ static int lunarssl_bn_lshift(lua_State* L) {
     int shamt = luaL_checkinteger(L, 3);
     luaL_argcheck(L, shamt >= 0, 2, "shamt must be non-negative");
 
-    LSSL_BN_CALL(BN_lshift, r, a, shamt);
+    LUNARSSL_BN_CALL(BN_lshift, r, a, shamt);
     return 0;
 }
 
@@ -769,7 +763,7 @@ static int lunarssl_bn_rshift(lua_State* L) {
     int shamt = luaL_checkinteger(L, 3);
     luaL_argcheck(L, shamt >= 0, 2, "shamt must be non-negative");
 
-    LSSL_BN_CALL(BN_rshift, r, a, shamt);
+    LUNARSSL_BN_CALL(BN_rshift, r, a, shamt);
     return 0;
 }
 
@@ -801,7 +795,7 @@ static int lunarssl_bn_copy(lua_State* L) {
     BIGNUM* from = lunarssl_bn_check(L, 1);
     BIGNUM* to = lunarssl_bn_check(L, 2);
 
-    LSSL_BN_CALL(BN_copy, to, from);
+    LUNARSSL_BN_CALL(BN_copy, to, from);
     return 0;
 }
 
@@ -810,14 +804,10 @@ static int lunarssl_bn_copy(lua_State* L) {
 /// @tparam lunarssl.bn bn
 /// @treturn lunarssl.bn
 static int lunarssl_bn_dup(lua_State* L) {
-    BIGNUM* a = lunarssl_bn_check(L, 1);
-    BIGNUM** bn = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+    BIGNUM* bn = lunarssl_bn_check(L, 1);
+    BIGNUM** dup = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
 
-    *bn = BN_dup(a);
-    if (!*bn)
-        return luaL_error(L, "BN_dup failed: %s", LSSL_ERR_REASON);
-
-    luaL_setmetatable(L, "lunarssl.bn");
+    LUNARSSL_BN_DUP(*dup, bn);
     return 1;
 }
 
@@ -842,11 +832,11 @@ static int lunarssl_bn_to_word(lua_State* L) {
 
 static int lunarssl_bn__tostring(lua_State* L) {
     BIGNUM* bn = lunarssl_bn_check(L, 1);
-    char* hex = BN_bn2hex(bn);
-    if (!hex)
-        return luaL_error(L, "BN_bn2hex failed: %s", LSSL_ERR_REASON);
 
-    lua_pushfstring(L, "lunarssl.bn: %s", hex);
+    char* hex;
+    LUNARSSL_BND_CALL(hex, BN_bn2hex, bn);
+
+    lua_pushfstring(L, "lunarssl.bn: %sh", hex);
     OPENSSL_free(hex);
     return 1;
 }
@@ -856,9 +846,6 @@ static int lunarssl_bn__add(lua_State* L) {
         lua_Integer word;
         BIGNUM* bn;
 
-        BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-        *r = BN_dup(bn);
-
         if (lua_isinteger(L, 1)) {
             word = luaL_checkinteger(L, 1);
             bn = lunarssl_bn_check(L, 2);
@@ -867,64 +854,63 @@ static int lunarssl_bn__add(lua_State* L) {
             bn = lunarssl_bn_check(L, 1);
         }
 
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+        LUNARSSL_BN_DUP(*r, bn);
+
         if (word < 0) { // (-w) + b = b - w or b + (-w) = b - w
-            LSSL_BNR_CALL(BN_sub_word, *r, (BN_ULONG)-word);
+            LUNARSSL_BNR_CALL(*r, BN_sub_word, *r, (BN_ULONG)-word);
         } else { // w + b = b + w or b + w = b + w
-            LSSL_BNR_CALL(BN_add_word, *r, (BN_ULONG)word);
+            LUNARSSL_BNR_CALL(*r, BN_add_word, *r, (BN_ULONG)word);
         }
     } else {
-        BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-        *r = lunarssl_bn_create(L, 0, 0);
-
         BIGNUM* a = lunarssl_bn_check(L, 1);
         BIGNUM* b = lunarssl_bn_check(L, 2);
 
-        LSSL_BNR_CALL(BN_add, *r, a, b);
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+        *r = lunarssl_bn_create(L, 0, 0);
+
+        LUNARSSL_BNR_CALL(*r, BN_add, *r, a, b);
     }
 
-    luaL_setmetatable(L, "lunarssl.bn");
     return 1;
 }
 
 static int lunarssl_bn__sub(lua_State* L) {
     if (lua_isinteger(L, 1) || lua_isinteger(L, 2)) {
-        lua_Integer word;
-        BIGNUM* bn;
-
         if (lua_isinteger(L, 1)) {
-            word = luaL_checkinteger(L, 1);
-            bn = lunarssl_bn_check(L, 2);
+            lua_Integer a = luaL_checkinteger(L, 1);
+            BIGNUM* b = lunarssl_bn_check(L, 2);
 
-            BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-            *r = BN_dup(bn);
-            LSSL_BN_negate(*r);
+            BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+            LUNARSSL_BN_DUP(*r, b);
+            LUNARSSL_BN_negate(*r);
 
-            if (word < 0) { // (-w) - b = -b - w
-                LSSL_BNR_CALL(BN_sub_word, *r, (BN_ULONG)-word);
+            if (a < 0) { // (-w) - b = -b - w
+                LUNARSSL_BNR_CALL(*r, BN_sub_word, *r, (BN_ULONG)-a);
             } else { // w - b = -b + w
-                LSSL_BNR_CALL(BN_add_word, *r, (BN_ULONG)word);
+                LUNARSSL_BNR_CALL(*r, BN_add_word, *r, (BN_ULONG)a);
             }
         } else {
-            word = luaL_checkinteger(L, 2);
-            bn = lunarssl_bn_check(L, 1);
+            BIGNUM* a = lunarssl_bn_check(L, 1);
+            lua_Integer b = luaL_checkinteger(L, 2);
 
-            BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-            *r = BN_dup(bn);
+            BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+            LUNARSSL_BN_DUP(*r, a);
 
-            if (word < 0) { // b - (-w) = b + w
-                LSSL_BNR_CALL(BN_add_word, *r, (BN_ULONG)-word);
+            if (a < 0) { // b - (-w) = b + w
+                LUNARSSL_BNR_CALL(*r, BN_add_word, *r, (BN_ULONG)-b);
             } else { // b - w = b - w
-                LSSL_BNR_CALL(BN_sub_word, *r, (BN_ULONG)word);
+                LUNARSSL_BNR_CALL(*r, BN_sub_word, *r, (BN_ULONG)b);
             }
         }
     } else {
-        BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-        *r = BN_new();
-
         BIGNUM* a = lunarssl_bn_check(L, 1);
         BIGNUM* b = lunarssl_bn_check(L, 2);
 
-        LSSL_BNR_CALL(BN_sub, *r, a, b);
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+        *r = lunarssl_bn_create(L, 0, 0);
+
+        LUNARSSL_BNR_CALL(*r, BN_sub, *r, a, b);
     }
 
     luaL_setmetatable(L, "lunarssl.bn");
@@ -944,26 +930,24 @@ static int lunarssl_bn__mul(lua_State* L) {
             bn = lunarssl_bn_check(L, 1);
         }
 
-        BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-        *r = BN_dup(bn);
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+        LUNARSSL_BN_DUP(*r, bn);
 
         if (word < 0) {
-            LSSL_BNR_CALL(BN_mul_word, *r, (BN_ULONG)-word);
-            LSSL_BN_negate(*r);
+            LUNARSSL_BNR_CALL(*r, BN_mul_word, *r, (BN_ULONG)-word);
+            LUNARSSL_BN_negate(*r);
         } else {
-            LSSL_BNR_CALL(BN_mul_word, *r, (BN_ULONG)word);
+            LUNARSSL_BNR_CALL(*r, BN_mul_word, *r, (BN_ULONG)word);
         }
     } else {
-        BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-        *r = BN_new();
-        if (!*r)
-            return luaL_error(L, "BN_new: %s", LSSL_ERR_REASON);
-
         BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
         BIGNUM* a = lunarssl_bn_check(L, 1);
         BIGNUM* b = lunarssl_bn_check(L, 2);
 
-        LSSL_BNRCTX_CALL(BN_mul, *r, ctx, a, b);
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+        *r = lunarssl_bn_create(L, 0, 0);
+
+        LUNARSSL_BNRCTX_CALL(*r, ctx, BN_mul, *r, a, b, ctx);
     }
 
     luaL_setmetatable(L, "lunarssl.bn");
@@ -971,39 +955,37 @@ static int lunarssl_bn__mul(lua_State* L) {
 }
 
 static int lunarssl_bn__div(lua_State* L) {
-    BIGNUM** r;
-
     if (lua_isinteger(L, 1)) {
+        BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
         lua_Integer a = luaL_checkinteger(L, 1);
         BIGNUM* b = lunarssl_bn_check(L, 2);
 
-        r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
         *r = lunarssl_bn_create(L, 0, a);
 
-        BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
-        LSSL_BNRCTX_CALL(BN_div, *r, ctx, NULL, *r, b);
+        LUNARSSL_BNRCTX_CALL(*r, ctx, BN_div, *r, NULL, *r, b, ctx);
     } else if (lua_isinteger(L, 2)) {
         BIGNUM* a = lunarssl_bn_check(L, 1);
         lua_Integer b = luaL_checkinteger(L, 2);
 
-        r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-        *r = BN_dup(a);
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+        LUNARSSL_BN_DUP(*r, a);
 
         if (b < 0) {
-            LSSL_BNR_CALL(BN_div_word, *r, (BN_ULONG)-b);
-            LSSL_BN_negate(*r);
+            LUNARSSL_BNR_CALL(*r, BN_div_word, *r, (BN_ULONG)-b);
+            LUNARSSL_BN_negate(*r);
         } else {
-            LSSL_BNR_CALL(BN_div_word, *r, (BN_ULONG)b);
+            LUNARSSL_BNR_CALL(*r, BN_div_word, *r, (BN_ULONG)b);
         }
     } else {
+        BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
         BIGNUM* a = lunarssl_bn_check(L, 1);
         BIGNUM* b = lunarssl_bn_check(L, 2);
 
-        r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
         *r = lunarssl_bn_create(L, 0, 0);
 
-        BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
-        LSSL_BNRCTX_CALL(BN_div, *r, ctx, NULL, a, b);
+        LUNARSSL_BNRCTX_CALL(*r, ctx, BN_div, *r, NULL, a, b, ctx);
     }
 
     luaL_setmetatable(L, "lunarssl.bn");
@@ -1011,42 +993,33 @@ static int lunarssl_bn__div(lua_State* L) {
 }
 
 static int lunarssl_bn__mod(lua_State* L) {
-    BIGNUM** r;
-    int a_neg;
-    int b_neg;
-
     if (lua_isinteger(L, 1)) {
+        BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
         lua_Integer a = luaL_checkinteger(L, 1);
         BIGNUM* b = lunarssl_bn_check(L, 2);
 
-        r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
         *r = lunarssl_bn_create(L, 0, a);
 
-        a_neg = a < 0;
-        b_neg = BN_is_negative(b);
+        int a_neg = a < 0;
+        int b_neg = BN_is_negative(b);
 
-        BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
-        if (!BN_div(NULL, *r, *r, b, ctx)) {
-            BN_free(*r);
-            BN_CTX_free(ctx);
-            return luaL_error(L, "BN_div failed: %s", LSSL_ERR_REASON);
-        }
-        BN_CTX_free(ctx);
+        LUNARSSL_BNRCTX_CALL(*r, ctx, BN_div, NULL, *r, *r, b, ctx);
 
         // convert remainder into modulo
         BN_set_negative(*r, a_neg);
         if (a_neg != b_neg && !BN_is_zero(*r)) {
-            LSSL_BNR_CALL(BN_add, *r, *r, b);
+            LUNARSSL_BNR_CALL(*r, BN_add, *r, *r, b);
         }
     } else if (lua_isinteger(L, 2)) {
         BIGNUM* a = lunarssl_bn_check(L, 1);
         lua_Integer b = luaL_checkinteger(L, 2);
 
-        r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
         *r = lunarssl_bn_create(L, 0, 0);
 
-        a_neg = BN_is_negative(a);
-        b_neg = b < 0;
+        int a_neg = BN_is_negative(a);
+        int b_neg = b < 0;
 
         BN_ULONG rem;
         if (b < 0) {
@@ -1057,36 +1030,36 @@ static int lunarssl_bn__mod(lua_State* L) {
 
         if (rem == (BN_ULONG)-1) {
             BN_free(*r);
-            return luaL_error(L, "BN_mod_word failed: %s", LSSL_ERR_REASON);
+            return luaL_error(L, "BN_mod_word failed: %s", LUNARSSL_ERR_REASON);
         }
 
-        LSSL_BNR_CALL(BN_set_word, *r, rem);
+        LUNARSSL_BNR_CALL(*r, BN_set_word, *r, rem);
         if (a_neg)
-            LSSL_BN_negate(*r);
+            LUNARSSL_BN_negate(*r);
 
         // convert remainder into modulo
         BN_set_negative(*r, a_neg);
         if (a_neg != b_neg && !BN_is_zero(*r)) {
             BIGNUM* bn = lunarssl_bn_create(L, 0, b);
-            LSSL_BNR_CALL(BN_add, *r, *r, bn);
+            LUNARSSL_BNR_CALL(*r, BN_add, *r, *r, bn);
         }
     } else {
         BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
         BIGNUM* a = lunarssl_bn_check(L, 1);
         BIGNUM* b = lunarssl_bn_check(L, 2);
 
-        r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+        BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
         *r = lunarssl_bn_create(L, 0, 0);
 
-        a_neg = BN_is_negative(a);
-        b_neg = BN_is_negative(b);
+        int a_neg = BN_is_negative(a);
+        int b_neg = BN_is_negative(b);
 
-        LSSL_BNRCTX_CALL(BN_mod, *r, ctx, a, b);
+        LUNARSSL_BNRCTX_CALL(*r, ctx, BN_mod, *r, a, b, ctx);
 
         // convert remainder into modulo
         BN_set_negative(*r, a_neg);
         if (a_neg != b_neg && !BN_is_zero(*r)) {
-            LSSL_BNR_CALL(BN_add, *r, *r, b);
+            LUNARSSL_BNR_CALL(*r, BN_add, *r, *r, b);
         }
     }
 
@@ -1110,11 +1083,11 @@ static int lunarssl_bn__pow(lua_State* L) {
         p = lunarssl_bn_check(L, 2);
     }
 
-    BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
+    BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
     *r = BN_new();
 
     BN_CTX* ctx = lunarssl_bn_ctx(L, -1);
-    LSSL_BNRCTX_CALL(BN_exp, *r, ctx, a, p);
+    LUNARSSL_BNRCTX_CALL(*r, ctx, BN_exp, *r, a, p, ctx);
 
     luaL_setmetatable(L, "lunarssl.bn");
     return 1;
@@ -1122,13 +1095,9 @@ static int lunarssl_bn__pow(lua_State* L) {
 
 static int lunarssl_bn__unm(lua_State* L) {
     BIGNUM* bn = lunarssl_bn_check(L, 1);
-    BIGNUM** r = (BIGNUM**)lua_newuserdata(L, sizeof(BIGNUM*));
-    *r = BN_dup(bn);
-    if (!*r)
-        return luaL_error(L, "BN_dup: %s", LSSL_ERR_REASON);
-
-    LSSL_BN_negate(*r);
-    luaL_setmetatable(L, "lunarssl.bn");
+    BIGNUM** r = lunarssl_newudata(L, BIGNUM*, "lunarssl.bn");
+    LUNARSSL_BN_DUP(*r, bn);
+    LUNARSSL_BN_negate(*r);
     return 1;
 }
 
