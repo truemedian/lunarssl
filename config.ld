@@ -5,7 +5,7 @@ description='Openssl binding for Lua'
 not_luadoc = true
 format = "discount"
 
-file = { "src" }
+file = { "src", exclude = { "src/vendor" } }
 dir = "/home/nameless/public_html/doc"
 
 style='theme'
