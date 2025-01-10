@@ -1,12 +1,17 @@
 /// @module lunarssl
+#include "private.h"
 
-#include <assert.h>
 #include "lunarssl.h"
 
+#include <assert.h>
+#include <lauxlib.h>
+#include <lua.h>
+#include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <stddef.h>
 
-static void lunarssl_init_openssl(lua_State* L) {
+LUNAR_INTERNAL void lunarssl_init_openssl(lua_State* const L) {
     // TODO: synchronize
     static int initialized = 0;
     if (initialized) {
@@ -18,131 +23,103 @@ static void lunarssl_init_openssl(lua_State* L) {
         return;
     }
 
+    ERR_clear_error();
     initialized = 1;
 }
 
-#define XX(ENUM, OSSL_ENUM, NAME) NAME,
-static const char* const lunarssl_version_list[] = {
-    LUNARSSL_VERSION_MAP(XX)
-};
-
-static const char* const lunarssl_info_list[] = {
-    LUNARSSL_INFO_MAP(XX)
-};
-
-#undef XX
-#define XX(ENUM, OSSL_ENUM, NAME) \
-    case ENUM:                    \
-        type = OSSL_ENUM;         \
-        break;
-
-/// Get compiled version information about the OpenSSL library.
 /// @function version
-/// @tparam string kind Which kind of information to get.
-/// @treturn string The requested information.
-static int lunarssl_version(lua_State* L) {
-    int kind = luaL_checkoption(L, 1, "long", lunarssl_version_list);
+/// Get compiled version information about the OpenSSL library.
+/// @treturn table version information compiled into OpenSSL
+LUNAR_EXPORT int lunarssl_lua_version(lua_State* const L) {
+    LUNAR_ENTER(0);
 
-    int type = 0;
-    switch (kind) {
-        LUNARSSL_VERSION_MAP(XX)
-    }
+    lua_createtable(L, 0, 3);
 
-    lua_pushstring(L, OpenSSL_version(type));
-    return 1;
+    lua_pushstring(L, OpenSSL_version(OPENSSL_VERSION_STRING));
+    lua_setfield(L, -2, "short");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_FULL_VERSION_STRING));
+    lua_setfield(L, -2, "long");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_VERSION));
+    lua_setfield(L, -2, "full");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_CFLAGS));
+    lua_setfield(L, -2, "compiler");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_BUILT_ON));
+    lua_setfield(L, -2, "built_on");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_PLATFORM));
+    lua_setfield(L, -2, "platform");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_DIR));
+    lua_setfield(L, -2, "openssldir");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_ENGINES_DIR));
+    lua_setfield(L, -2, "enginesdir");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_MODULES_DIR));
+    lua_setfield(L, -2, "modulesdir");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_CPU_INFO));
+    lua_setfield(L, -2, "cpuinfo");
+
+    lua_pushstring(L, OpenSSL_version(OPENSSL_WINCTX));
+    lua_setfield(L, -2, "winctx");
+
+    LUNAR_LEAVE(1);
 }
 
-/// Get runtime version information about the OpenSSL library.
 /// @function info
-/// @tparam string kind Which kind of information to get.
-/// @treturn string The requested information.
-static int lunarssl_info(lua_State* L) {
-    int kind = luaL_checkoption(L, 1, NULL, lunarssl_info_list);
+/// Get runtime version information about the OpenSSL library.
+/// @treturn table runtime information collected by OpenSSL
+LUNAR_EXPORT int lunarssl_lua_info(lua_State* const L) {
+    LUNAR_ENTER(0);
 
-    int type = 0;
-    switch (kind) {
-        LUNARSSL_INFO_MAP(XX)
-    }
+    lua_createtable(L, 0, 9);
 
-    lua_pushstring(L, OPENSSL_info(type));
-    return 1;
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_CONFIG_DIR));
+    lua_setfield(L, -2, "openssldir");
+
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_ENGINES_DIR));
+    lua_setfield(L, -2, "enginesdir");
+
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_MODULES_DIR));
+    lua_setfield(L, -2, "modulesdir");
+
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_DSO_EXTENSION));
+    lua_setfield(L, -2, "dso_extension");
+
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_DIR_FILENAME_SEPARATOR));
+    lua_setfield(L, -2, "file_separator");
+
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_LIST_SEPARATOR));
+    lua_setfield(L, -2, "list_separator");
+
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_SEED_SOURCE));
+    lua_setfield(L, -2, "seed_source");
+
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_CPU_SETTINGS));
+    lua_setfield(L, -2, "cpuinfo");
+
+    lua_pushstring(L, OPENSSL_info(OPENSSL_INFO_WINDOWS_CONTEXT));
+    lua_setfield(L, -2, "winctx");
+
+    LUNAR_LEAVE(1);
 }
 
-#undef XX
-
-static void lunarssl_push_errortable(lua_State* L, unsigned long err) {
-    lua_createtable(L, 0, 4);
-    lua_pushstring(L, ERR_lib_error_string(err));
-    lua_setfield(L, -2, "library");
-
-    lua_pushstring(L, ERR_reason_error_string(err));
-    lua_setfield(L, -2, "reason");
-
-    char buf[256];
-    ERR_error_string_n(err, buf, 256);
-    lua_pushstring(L, buf);
-    lua_setfield(L, -2, "message");
-
-    lua_pushboolean(L, ERR_FATAL_ERROR(err));
-    lua_setfield(L, -2, "fatal");
-}
-
-/// Get information about the most recent error and remove it from the error queue.
-/// @tparam[opt] boolean peek When true, the error will not be removed from the queue.
-/// @treturn table|nil The error state, or nil.
-static int lunarssl_last_error(lua_State* L) {
-    unsigned long err;
-    if (lua_toboolean(L, 1)) {
-        err = ERR_peek_error();
-    } else {
-        err = ERR_get_error();
-    }
-
-    if (err == 0) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    lunarssl_push_errortable(L, err);
-    return 1;
-}
-
-/// Returns a list information on all errors in the error queue.
-/// @treturn table A list of all errors in the error queue.
-static int lunarssl_list_errors(lua_State* L) {
-
-    lua_newtable(L);
-
-    size_t len = 1;
-    int err = ERR_get_error();
-    while (err != 0) {
-        lunarssl_push_errortable(L, err);
-        lua_rawseti(L, -2, len++);
-        err = ERR_get_error();
-    }
-
-    return 1;
-}
-
-/// Clear the error queue.
-static int lunarssl_clear_error(lua_State* L) {
-    (void)L;
-    ERR_clear_error();
-    return 0;
-}
-
-luaL_Reg lib_lunarssl[] = {
-    { "version", lunarssl_version },
-    { "info", lunarssl_info },
-    { "last_error", lunarssl_last_error },
-    { "list_errors", lunarssl_list_errors },
-    { "clear_error", lunarssl_clear_error },
+LUNAR_INTERNAL const luaL_Reg lunarssl_lib[] = {
+    { "version", lunarssl_lua_version },
+    { "info", lunarssl_lua_info },
     { NULL, NULL }
 };
 
-int luaopen_lunarssl(lua_State* L) {
-    lunarssl_init_openssl(L);
+LUNAR_EXPORT int luaopen_lunarssl(lua_State* const L) {
+    LUNAR_ENTER(0);
 
-    luaL_newlib(L, lib_lunarssl);
-    return 1;
+    lunarssl_init_openssl(L);
+    lunar_register_library(lunarssl_lib);
+
+    LUNAR_LEAVE(1);
 }
