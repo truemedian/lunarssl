@@ -1,5 +1,6 @@
 /// @module lunarssl.bn
 #include "private.h"
+#include "compat.h"
 
 #include "bn.h"
 
@@ -9,6 +10,7 @@
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
 #include <stddef.h>
+#include <limits.h>
 
 LUNAR_INTERNAL BN_ULONG lunarssl_bn_uabs(const lua_Integer value) {
     return value < 0 ? 0 - (BN_ULONG)value : (BN_ULONG)value;
@@ -101,10 +103,12 @@ LUNAR_FUNCTION int lunarssl_lua_bn_from_bin(lua_State* const L) {
 
     size_t len = 0;
     const char* const bin = luaL_checklstring(L, 1, &len);
+    lunar_argcheck(L, len <= INT_MAX, 1, "string too long");
+
     BIGNUM** const bn = lunar_class_create(BIGNUM*, "lunarssl.bn.int");
     *bn = lunarssl_bn_create(L, 0);
 
-    LUNAR_TCALL(BN_bin2bn, (const unsigned char*)bin, len, *bn);
+    LUNAR_TCALL(BN_bin2bn, (const unsigned char*)bin, (int)len, *bn);
     LUNAR_LEAVE(1);
 }
 
@@ -235,7 +239,7 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_is_word(lua_State* const L) {
     const BIGNUM* const bn = lunarssl_bn_check(L, 1);
     lua_Integer const word = luaL_checkinteger(L, 2);
 
-    if (BN_is_negative(bn) != word < 0)
+    if (BN_is_negative(bn) != (word < 0))
         lua_pushboolean(L, 0);
     else
         lua_pushboolean(L, BN_abs_is_word(bn, lunarssl_bn_uabs(word)));
@@ -617,13 +621,7 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_mod_word(lua_State* const L) {
     const BIGNUM* const bn = lunarssl_bn_check(L, 1);
     const lua_Integer word = luaL_checkinteger(L, 2);
 
-    BN_ULONG rem = 0;
-    if (word < 0) {
-        rem = LUNAR_DCALL(rem != (BN_ULONG)-1, BN_mod_word, bn, lunarssl_bn_uabs(word));
-    } else {
-        rem = LUNAR_DCALL(rem != (BN_ULONG)-1, BN_mod_word, bn, lunarssl_bn_uabs(word));
-    }
-
+    BN_ULONG rem = LUNAR_DCALL(rem != (BN_ULONG)-1, BN_mod_word, bn, lunarssl_bn_uabs(word));
     lua_pushinteger(L, (lua_Integer)rem);
     LUNAR_LEAVE(1);
 }
@@ -667,12 +665,12 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_to_bin(lua_State* const L) {
     LUNAR_ENTER(1);
 
     const BIGNUM* const bn = lunarssl_bn_check(L, 1);
-    const int len = BN_num_bytes(bn);
+    const size_t len = (size_t)BN_num_bytes(bn);
 
     unsigned char* const bin = (unsigned char*)OPENSSL_malloc(len);
-    const int written = LUNAR_DCALLF(written != -1, { OPENSSL_free(bin); }, BN_bn2binpad, bn, bin, len);
+    const int written = LUNAR_DCALLF(written < 0, { OPENSSL_free(bin); }, BN_bn2binpad, bn, bin, (int)len);
 
-    lua_pushlstring(L, (const char*)bin, written);
+    lua_pushlstring(L, (const char*)bin, (size_t)written);
     OPENSSL_free(bin);
     LUNAR_LEAVE(1);
 }
@@ -685,10 +683,9 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_set_bit(lua_State* const L) {
     LUNAR_ENTER(2);
 
     BIGNUM* const bn = lunarssl_bn_check(L, 1);
-    const lua_Integer bit = luaL_checkinteger(L, 2);
-    luaL_argcheck(L, bit >= 0, 2, "bit must be non-negative");
+    const int bit = (int)lunar_checkwithin(L, 2, 0, INT_MAX);
 
-    LUNAR_TCALL(BN_set_bit, bn, (int)bit);
+    LUNAR_TCALL(BN_set_bit, bn, bit);
     LUNAR_LEAVE(0);
 }
 
@@ -700,10 +697,9 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_clear_bit(lua_State* const L) {
     LUNAR_ENTER(2);
 
     BIGNUM* const bn = lunarssl_bn_check(L, 1);
-    const lua_Integer bit = luaL_checkinteger(L, 2);
-    luaL_argcheck(L, bit >= 0, 2, "bit must be non-negative");
+    const int bit = (int)lunar_checkwithin(L, 2, 0, INT_MAX);
 
-    LUNAR_TCALL(BN_clear_bit, bn, (int)bit);
+    LUNAR_TCALL(BN_clear_bit, bn, bit);
     LUNAR_LEAVE(0);
 }
 
@@ -716,10 +712,9 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_test_bit(lua_State* const L) {
     LUNAR_ENTER(2);
 
     const BIGNUM* const bn = lunarssl_bn_check(L, 1);
-    const lua_Integer bit = luaL_checkinteger(L, 2);
-    luaL_argcheck(L, bit >= 0, 2, "bit must be non-negative");
+    const int bit = (int)lunar_checkwithin(L, 2, 0, INT_MAX);
 
-    lua_pushboolean(L, BN_is_bit_set(bn, (int)bit));
+    lua_pushboolean(L, BN_is_bit_set(bn, bit));
     LUNAR_LEAVE(1);
 }
 
@@ -733,10 +728,9 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_mask_bits(lua_State* const L) {
     LUNAR_ENTER(2);
 
     BIGNUM* const bn = lunarssl_bn_check(L, 1);
-    const lua_Integer bits = luaL_checkinteger(L, 2);
-    luaL_argcheck(L, bits >= 0, 2, "bits must be non-negative");
+    const int bits = (int)lunar_checkwithin(L, 2, 0, INT_MAX);
 
-    LUNAR_TCALL(BN_mask_bits, bn, (int)bits);
+    LUNAR_TCALL(BN_mask_bits, bn, bits);
     LUNAR_LEAVE(0);
 }
 
@@ -750,10 +744,9 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_lshift(lua_State* const L) {
 
     BIGNUM* const r = lunarssl_bn_check(L, 1);
     const BIGNUM* const a = lunarssl_bn_check_loose(L, 2);
-    const lua_Integer shamt = luaL_checkinteger(L, 3);
-    luaL_argcheck(L, shamt >= 0, 2, "shamt must be non-negative");
+    const int shamt = (int)lunar_checkwithin(L, 3, 0, INT_MAX);
 
-    LUNAR_TCALL(BN_lshift, r, a, (int)shamt);
+    LUNAR_TCALL(BN_lshift, r, a, shamt);
     LUNAR_LEAVE(0);
 }
 
@@ -767,10 +760,9 @@ LUNAR_FUNCTION int lunarssl_lua_bn_int_rshift(lua_State* const L) {
 
     BIGNUM* const r = lunarssl_bn_check(L, 1);
     const BIGNUM* const a = lunarssl_bn_check_loose(L, 2);
-    const lua_Integer shamt = luaL_checkinteger(L, 3);
-    luaL_argcheck(L, shamt >= 0, 2, "shamt must be non-negative");
+    const int shamt = (int)lunar_checkwithin(L, 3, 0, INT_MAX);
 
-    LUNAR_TCALL(BN_rshift, r, a, (int)shamt);
+    LUNAR_TCALL(BN_rshift, r, a, shamt);
     LUNAR_LEAVE(0);
 }
 

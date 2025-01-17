@@ -1,2 +1,4 @@
 *.o
 *.so
+
+compile_flags.txt

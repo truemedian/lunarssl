@@ -3,8 +3,77 @@
 #include <lauxlib.h>
 #include <lua.h>
 #include <openssl/err.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
+
+LUNAR_EXPORT void LUNAR_NORETURN lunar_error(lua_State* const L, const char* const fmt, ...) {
+    va_list argp;
+    va_start(argp, fmt);
+
+    luaL_where(L, 1);
+    lua_pushvfstring(L, fmt, argp);
+    va_end(argp);
+
+    lua_concat(L, 2);
+    lua_error(L);
+    unreachable();
+}
+
+LUNAR_EXPORT void LUNAR_NORETURN lunar_argerror(lua_State* const L, int arg, const char* const fmt, ...) {
+    va_list argp;
+    va_start(argp, fmt);
+
+    const char* const extramsg = lua_pushvfstring(L, fmt, argp);
+    va_end(argp);
+
+    lua_Debug ar; // no stack frame
+    if (!lua_getstack(L, 0, &ar))
+        lunar_error(L, "bad argument #%d (%s)", arg, extramsg);
+
+    lua_getinfo(L, "n", &ar);
+    if (strcmp(ar.namewhat, "method") == 0) {
+        arg -= 1; // don't count implicit self
+        if (arg == 0) // error is in the self argument
+            lunar_error(L, "calling '%s' on bad self (%s)", ar.name, extramsg);
+    }
+
+    if (ar.name == NULL)
+        ar.name = "?";
+
+    lunar_error(L, "bad argument #%d to '%s' (%s)", arg, ar.name, extramsg);
+}
+
+LUNAR_EXPORT void LUNAR_NORETURN lunar_typeerror(lua_State* const L, int arg, const char* const tname) {
+    if (luaL_getmetafield(L, arg, "__name")) {
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            const char* const name = lua_tostring(L, -1);
+            lunar_argerror(L, arg, "expected %s, got %s", tname, name);
+        }
+
+        lua_pop(L, 1);
+    }
+
+    const char* const name = luaL_typename(L, arg);
+    lunar_argerror(L, arg, "expected %s, got %s", tname, name);
+}
+
+LUNAR_EXPORT lua_Integer lunar_checkwithin(lua_State* const L, const int idx, const lua_Integer min, const lua_Integer max) {
+    const lua_Integer r = luaL_checkinteger(L, idx);
+    if (r < min || r > max)
+        lunar_argerror(L, idx, "out of range [%d, %d]", min, max);
+
+    return r;
+}
+
+LUNAR_EXPORT lua_Integer lunar_optwithin(lua_State* const L, const int idx, const lua_Integer def, const lua_Integer min, const lua_Integer max) {
+    const lua_Integer r = luaL_optinteger(L, idx, def);
+    if (r < min || r > max)
+        lunar_argerror(L, idx, "out of range [%d, %d]", min, max);
+
+    return r;
+}
 
 LUNAR_EXPORT void* lunar_class_create0(lua_State* const L, const char* const name, const size_t len) {
 #if LUA_VERSION_NUM >= 504
@@ -36,32 +105,23 @@ LUNAR_EXPORT void* lunar_class0(lua_State* const L, const int idx, const char* c
 /*                  Lunar functions aimed directly at OpenSSL                 */
 
 LUNAR_EXPORT const char* lunarssl_collect_errorlist(lua_State* const L) {
-    if (ERR_peek_error() == 0)
-        return lua_pushstring(L, "no error reported");
+    if (ERR_peek_error() == 0) {
+        lua_pushstring(L, "no error reported");
+    } else {
+        const int top = lua_gettop(L);
+        for (unsigned long err = ERR_get_error(); err != 0; err = ERR_get_error()) {
+            char buf[256];
 
-    const int top = lua_gettop(L);
-    for (unsigned long err = ERR_get_error(); err != 0; err = ERR_get_error()) {
-        const int library_n = ERR_GET_LIB(err);
-        const int reason_n = ERR_GET_REASON(err);
+            ERR_error_string_n(err, buf, sizeof(buf));
 
-        const char* const library = ERR_lib_error_string(err);
-        const char* const reason = ERR_reason_error_string(err);
+            luaL_checkstack(L, 2, NULL);
+            lua_pushstring(L, buf);
+            lua_pushstring(L, "; ");
+        }
 
-        char err_s[(sizeof(err) * 2) + 1] = { 0 };
-        snprintf(err_s, sizeof(err_s), "%lx", err);
-
-        char library_s[(sizeof(library_n) * 2) + 1] = { 0 };
-        snprintf(library_s, sizeof(library_s), "%x", library_n);
-
-        char reason_s[(sizeof(reason_n) * 2) + 1] = { 0 };
-        snprintf(reason_s, sizeof(reason_s), "%x", reason_n);
-
-        luaL_checkstack(L, 2, NULL);
-        lua_pushfstring(L, "%s:%s::%s", err_s, library ? library : library_s, reason ? reason : reason_s);
-        lua_pushstring(L, "; ");
+        lua_pop(L, 1);
+        lua_concat(L, lua_gettop(L) - top);
     }
 
-    lua_pop(L, 1);
-    lua_concat(L, lua_gettop(L) - top);
     return lua_tostring(L, -1);
 }

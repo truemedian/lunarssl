@@ -30,7 +30,7 @@ LUNAR_INTERNAL void lunarssl_init_openssl(lua_State* const L) {
 /// @function version
 /// Get compiled version information about the OpenSSL library.
 /// @treturn table version information compiled into OpenSSL
-LUNAR_EXPORT int lunarssl_lua_version(lua_State* const L) {
+LUNAR_INTERNAL int lunarssl_lua_version(lua_State* const L) {
     LUNAR_ENTER(0);
 
     lua_createtable(L, 0, 3);
@@ -74,7 +74,7 @@ LUNAR_EXPORT int lunarssl_lua_version(lua_State* const L) {
 /// @function info
 /// Get runtime version information about the OpenSSL library.
 /// @treturn table runtime information collected by OpenSSL
-LUNAR_EXPORT int lunarssl_lua_info(lua_State* const L) {
+LUNAR_INTERNAL int lunarssl_lua_info(lua_State* const L) {
     LUNAR_ENTER(0);
 
     lua_createtable(L, 0, 9);
